@@ -53,6 +53,15 @@ public interface AppService extends IService<App> {
     Flux<String> chatToGenCode(Long appId, String message, User loginUser);
 
     /**
+     * 应用生成（异步）
+     * @param appId
+     * @param message
+     * @param loginUser
+     * @return
+     */
+    Flux<String> chatToGenCodeAsync(Long appId, String message, User loginUser);
+
+    /**
      * 部署应用
      * @param appId
      * @param loginUser
@@ -75,10 +84,11 @@ public interface AppService extends IService<App> {
     void generateAppScreenshotAsync(Long appId, String appUrl);
 
     /**
-     *
+     * 创建应用
      * @param appAddRequest
      * @param LoginUser
      * @return
      */
     Long createApp(AppAddRequest appAddRequest, User LoginUser);
+
 }

@@ -33,11 +33,15 @@ import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Sinks;
 
 import java.io.File;
 import java.io.Serializable;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.stream.Collectors;
 
 /**
@@ -48,6 +52,12 @@ import java.util.stream.Collectors;
 @Service
 @Slf4j
 public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppService {
+
+    // appId -> 推送通道：用于把后台生成过程中的 chunk 广播给所有 SSE 订阅者（支持刷新/重连复用同一通道）
+    private final Map<Long, Sinks.Many<String>> appGenSinkMap = new ConcurrentHashMap<>();
+
+    // 正在生成中的 appId 集合：用于保证同一个 appId 的生成任务只会启动一次（并发幂等控制）
+    private final Set<Long> runningGenAppIdSet = ConcurrentHashMap.newKeySet();
 
     @Resource
     private UserService userService;
@@ -69,6 +79,9 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppSe
 
     @Resource
     private AiCodeGenTypeRoutingServiceFactory aiCodeGenTypeRoutingServiceFactory;
+
+    @Resource
+    private ThreadPoolExecutor threadPoolExecutor;
 
     @Override
     public QueryWrapper getQueryWrapper(AppQueryRequest appQueryRequest) {
@@ -160,6 +173,83 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppSe
         // 7. 收集 AI 响应内容并完成后记录到对话历史
         return streamHandlerExecutor.doExecute(codeStream, chatHistoryService, appId, loginUser, codeGenTypeEnum);
     }
+
+    @Override
+    public Flux<String> chatToGenCodeAsync(Long appId, String message, User loginUser) {
+        // 1. 参数校验
+        ThrowUtils.throwIf(appId == null || appId <= 0, ErrorCode.PARAMS_ERROR, "应用 ID 不能为空");
+        ThrowUtils.throwIf(StrUtil.isBlank(message), ErrorCode.PARAMS_ERROR, "用户消息不能为空");
+        // 2. 查询应用信息
+        App app = this.getById(appId);
+        ThrowUtils.throwIf(app == null, ErrorCode.NOT_FOUND_ERROR, "应用不存在");
+        // 3. 验证用户是否有权限访问该应用，仅本人可以生成代码
+        if (!app.getUserId().equals(loginUser.getId())) {
+            throw new BusinessException(ErrorCode.NO_AUTH_ERROR, "无权限访问该应用");
+        }
+        // 4. 获取应用的代码生成类型
+        String codeGenType = app.getCodeGenType();
+        CodeGenTypeEnum codeGenTypeEnum = CodeGenTypeEnum.getEnumByValue(codeGenType);
+        if (codeGenTypeEnum == null) {
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "不支持的代码生成类型");
+        }
+
+        chatHistoryService.addChatMessage(appId, message, ChatMessageTypeEnum.USER.getValue(), loginUser.getId());
+
+        App queuedApp = new App();
+        queuedApp.setId(appId);
+        queuedApp.setStatus("wait");
+        queuedApp.setExecMessage("排队中");
+        this.updateById(queuedApp);
+
+        // 为 appId 获取（或创建）一个专属的“推送通道”
+        // 1) 多个前端连接（刷新/重连/多窗口）会复用同一个 sink，从而订阅到同一条生成流
+        // 2) multicast 表示广播给所有订阅者；directBestEffort 表示尽力实时推送，慢订阅者可能丢数据但不会拖慢整体
+        Sinks.Many<String> sink = appGenSinkMap.computeIfAbsent(appId,
+                id -> Sinks.many().multicast().directBestEffort());
+
+        // 同一个 appId 的生成任务只允许启动一次（并发情况下通过 Set.add 的返回值实现幂等）
+        // - 第一次请求：add 返回 true，shouldStart=true，进入 if 启动后台任务
+        // - 后续请求：add 返回 false，不再重复启动任务，只返回同一个 sink 的 Flux 给前端订阅
+        boolean shouldStart = runningGenAppIdSet.add(appId);
+        if (shouldStart) {
+            CompletableFuture.runAsync(() -> {
+                try {
+                    App runningApp = new App();
+                    runningApp.setId(appId);
+                    runningApp.setStatus("running");
+                    runningApp.setExecMessage("执行中");
+                    this.updateById(runningApp);
+
+                    Flux<String> originFlux = aiCodeGeneratorFacade.generateAndSaveCodeStream(message, codeGenTypeEnum, appId);
+                    Flux<String> processedFlux = streamHandlerExecutor.doExecute(originFlux, chatHistoryService, appId, loginUser, codeGenTypeEnum);
+
+                    processedFlux
+                            .doOnNext(chunk -> sink.tryEmitNext(chunk))
+                            .doOnComplete(() -> {
+                                App successApp = new App();
+                                successApp.setId(appId);
+                                successApp.setStatus("succeed");
+                                successApp.setExecMessage("执行成功");
+                                this.updateById(successApp);
+                                sink.tryEmitComplete();
+                            })
+                            .doOnError(e -> {
+                                handleAppUpdateError(appId, e.getMessage());
+                                chatHistoryService.addChatMessage(appId, "AI回复失败: " + e.getMessage(),
+                                        ChatMessageTypeEnum.ERROR.getValue(), loginUser.getId());
+                                sink.tryEmitError(e);
+                            })
+                            .blockLast();
+                } finally {
+                    runningGenAppIdSet.remove(appId);
+                    appGenSinkMap.remove(appId);
+                }
+            }, threadPoolExecutor);
+        }
+
+        return sink.asFlux();
+    }
+
 
     @Override
     public String deployApp(Long appId, User loginUser) {
@@ -280,7 +370,7 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppSe
         app.setCodeGenType(selectedCodeGenType.getValue());
         // 插入数据库
         boolean result = this.save(app);
-        ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR);
+        ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR, "创建应用失败");
         log.info("应用创建成功，ID: {}, 类型: {}", app.getId(), selectedCodeGenType.getValue());
         return app.getId();
     }
@@ -298,5 +388,16 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppSe
             }
         }
         throw new BusinessException(ErrorCode.SYSTEM_ERROR, "生成部署key失败，请重试");
+    }
+
+    private void handleAppUpdateError(long appId, String execMessage) {
+        App updateAppResult = new App();
+        updateAppResult.setId(appId);
+        updateAppResult.setStatus("failed");
+        updateAppResult.setExecMessage(execMessage);
+        boolean result = this.updateById(updateAppResult);
+        if (!result) {
+            log.error("更新应用状态失败" + appId + ", " + execMessage);
+        }
     }
 }

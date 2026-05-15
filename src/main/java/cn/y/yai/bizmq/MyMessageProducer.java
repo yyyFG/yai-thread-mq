@@ -5,7 +5,7 @@ import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.stereotype.Component;
 
 // 使用@Component注解标记该类为一个组件，让Spring框架能够扫描并将其纳入管理
-@Component
+//@Component
 public class MyMessageProducer {
     // 使用@Resource注解对rabbitTemplate进行依赖注入
     @Resource

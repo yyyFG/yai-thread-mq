@@ -113,4 +113,16 @@ public class App implements Serializable {
     @Column("isShare")
     private Integer isShare;
 
+    /**
+     * 任务状态
+     */
+    @Column("status")
+    private String status;
+
+    /**
+     * 执行信息
+     */
+    @Column("execMessage")
+    private String execMessage;
+
 }

@@ -13,7 +13,8 @@ import java.util.Map;
 public enum ChatMessageTypeEnum {
 
     USER("用户", "user"),
-    AI("AI", "ai");
+    AI("AI", "ai"),
+    ERROR("错误", "error");
 
     private final String text;
     private final String value;

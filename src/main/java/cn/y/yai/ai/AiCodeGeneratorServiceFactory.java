@@ -101,6 +101,7 @@ public class AiCodeGeneratorServiceFactory {
         chatHistoryService.loadChatHistoryToMemory(appId, chatMemory, 20);
         return switch (codeGenTypeEnum){
             case VUE_PROJECT -> {
+                // 使用多例模式的 StreamingChatModel 解决并发问题
                 StreamingChatModel reasoningStreamingChatModel = SpringContextUtil.getBean("reasoningStreamingChatModelPrototype", StreamingChatModel.class);
                 yield AiServices.builder(AiCodeGeneratorService.class)
                         .chatModel(chatModel)
@@ -115,10 +116,11 @@ public class AiCodeGeneratorServiceFactory {
                         .build();
             }
             case HTML, MULTI_FILE -> {
-                StreamingChatModel reasoningStreamingChatModel = SpringContextUtil.getBean("streamingChatModelPrototype", StreamingChatModel.class);
+                // 使用多例模式的 StreamingChatModel 解决并发问题
+                StreamingChatModel streamingChatModel = SpringContextUtil.getBean("streamingChatModelPrototype", StreamingChatModel.class);
                 yield AiServices.builder(AiCodeGeneratorService.class)
                         .chatModel(chatModel)
-                        .streamingChatModel(reasoningStreamingChatModel)
+                        .streamingChatModel(streamingChatModel)
                         .chatMemory(chatMemory)
                         .build();
             }
