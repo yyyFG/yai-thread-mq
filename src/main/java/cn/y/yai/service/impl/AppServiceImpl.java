@@ -5,6 +5,8 @@ import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.io.FileUtil;
 import cn.hutool.core.util.RandomUtil;
 import cn.hutool.core.util.StrUtil;
+import cn.y.yai.ai.AiCodeGenAppNameService;
+import cn.y.yai.ai.AiCodeGenAppNameServiceFactory;
 import cn.y.yai.ai.AiCodeGenTypeRoutingService;
 import cn.y.yai.ai.AiCodeGenTypeRoutingServiceFactory;
 import cn.y.yai.ai.core.AiCodeGeneratorFacade;
@@ -79,6 +81,9 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppSe
 
     @Resource
     private AiCodeGenTypeRoutingServiceFactory aiCodeGenTypeRoutingServiceFactory;
+
+    @Resource
+    private AiCodeGenAppNameServiceFactory aiCodeGenAppNameServiceFactory;
 
     @Resource
     private ThreadPoolExecutor threadPoolExecutor;
@@ -362,8 +367,12 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppSe
         App app = new App();
         BeanUtil.copyProperties(appAddRequest, app);
         app.setUserId(loginUser.getId());
+        // 使用 AI 智能生成名称
+        AiCodeGenAppNameService appNameGenService = aiCodeGenAppNameServiceFactory.createAppNameGenService();
+        String appName = appNameGenService.appNameGen(initPrompt);
+        app.setAppName(appName);
         // 应用名称暂时为 initPrompt 前 12 位
-        app.setAppName(initPrompt.substring(0, Math.min(initPrompt.length(), 20)));
+//        app.setAppName(initPrompt.substring(0, Math.min(initPrompt.length(), 20)));
         // 使用 AI 智能选择代码生成类型
         AiCodeGenTypeRoutingService routingService = aiCodeGenTypeRoutingServiceFactory.createAiCodeGenTypeRoutingService();
         CodeGenTypeEnum selectedCodeGenType = routingService.routeCodeGenType(initPrompt);
