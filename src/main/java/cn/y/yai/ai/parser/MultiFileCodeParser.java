@@ -26,6 +26,8 @@ public class MultiFileCodeParser implements CodeParser<MultiFileCodeResult>{
         // 设置 HTML 代码
         if (htmlCode != null && !htmlCode.trim().isEmpty()) {
             result.setHtmlCode(htmlCode.trim());
+        } else {
+            result.setHtmlCode(null);
         }
         // 设置 CSS 代码
         if (cssCode != null && !cssCode.trim().isEmpty()) {

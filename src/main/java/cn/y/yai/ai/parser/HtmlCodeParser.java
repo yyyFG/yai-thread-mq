@@ -22,7 +22,7 @@ public class HtmlCodeParser implements CodeParser<HtmlCodeResult>{
             result.setHtmlCode(htmlCode.trim());
         } else {
             // 如果没有找到代码块，将整个内容作为 HTML
-            result.setHtmlCode(codeContent.trim());
+            result.setHtmlCode(null);
         }
         return result;
     }
