@@ -62,6 +62,15 @@ public interface AppService extends IService<App> {
     Flux<String> chatToGenCodeAsync(Long appId, String message, User loginUser);
 
     /**
+     * 应用生成（RabbitMQ）
+     * @param appId
+     * @param message
+     * @param loginUser
+     * @return
+     */
+    Flux<String> chatToGenCodeRabMQ(Long appId, String message, User loginUser);
+
+    /**
      * 部署应用
      * @param appId
      * @param loginUser

@@ -13,6 +13,7 @@ import cn.y.yai.ai.core.AiCodeGeneratorFacade;
 import cn.y.yai.ai.core.builder.VueProjectBuilder;
 import cn.y.yai.ai.core.handler.StreamHandlerExecutor;
 import cn.y.yai.ai.model.enums.CodeGenTypeEnum;
+import cn.y.yai.bizmq.AiMessageProducer;
 import cn.y.yai.constant.AppConstant;
 import cn.y.yai.exception.BusinessException;
 import cn.y.yai.exception.ErrorCode;
@@ -87,6 +88,9 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppSe
 
     @Resource
     private ThreadPoolExecutor threadPoolExecutor;
+
+    @Resource
+    private AiMessageProducer aiMessageProducer;
 
     @Override
     public QueryWrapper getQueryWrapper(AppQueryRequest appQueryRequest) {
@@ -202,7 +206,7 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppSe
 
         App queuedApp = new App();
         queuedApp.setId(appId);
-        queuedApp.setStatus("wait");
+        queuedApp.setStatus(AppConstant.WAIT_STATUS);
         queuedApp.setExecMessage("排队中");
         this.updateById(queuedApp);
 
@@ -221,7 +225,7 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppSe
                 try {
                     App runningApp = new App();
                     runningApp.setId(appId);
-                    runningApp.setStatus("running");
+                    runningApp.setStatus(AppConstant.RUNNING_STATUS);
                     runningApp.setExecMessage("执行中");
                     this.updateById(runningApp);
 
@@ -233,7 +237,7 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppSe
                             .doOnComplete(() -> {
                                 App successApp = new App();
                                 successApp.setId(appId);
-                                successApp.setStatus("succeed");
+                                successApp.setStatus(AppConstant.SUCCEED_STATUS);
                                 successApp.setExecMessage("执行成功");
                                 this.updateById(successApp);
                                 sink.tryEmitComplete();
@@ -255,6 +259,47 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppSe
         return sink.asFlux();
     }
 
+    @Override
+    public Flux<String> chatToGenCodeRabMQ(Long appId, String message, User loginUser) {
+        // 1. 参数校验
+        ThrowUtils.throwIf(appId == null || appId <= 0, ErrorCode.PARAMS_ERROR, "应用 ID 不能为空");
+        ThrowUtils.throwIf(StrUtil.isBlank(message), ErrorCode.PARAMS_ERROR, "用户消息不能为空");
+        // 2. 查询应用信息
+        App app = this.getById(appId);
+        ThrowUtils.throwIf(app == null, ErrorCode.NOT_FOUND_ERROR, "应用不存在");
+        // 3. 验证用户是否有权限访问该应用，仅本人可以生成代码
+        if (!app.getUserId().equals(loginUser.getId())) {
+            throw new BusinessException(ErrorCode.NO_AUTH_ERROR, "无权限访问该应用");
+        }
+        // 4. 获取应用的代码生成类型
+        String codeGenType = app.getCodeGenType();
+        CodeGenTypeEnum codeGenTypeEnum = CodeGenTypeEnum.getEnumByValue(codeGenType);
+        if (codeGenTypeEnum == null) {
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "不支持的代码生成类型");
+        }
+
+        Sinks.Many<String> sink = appGenSinkMap.computeIfAbsent(appId,
+                id -> Sinks.many().multicast().directBestEffort());
+
+        boolean shouldStart = runningGenAppIdSet.add(appId);
+        if (shouldStart) {
+            chatHistoryService.addChatMessage(appId, message, ChatMessageTypeEnum.USER.getValue(), loginUser.getId());
+
+            App queuedApp = new App();
+            queuedApp.setId(appId);
+            queuedApp.setStatus(AppConstant.WAIT_STATUS);
+            queuedApp.setExecMessage("排队中");
+            this.updateById(queuedApp);
+
+            Map<String, Object> mqPayload = new HashMap<>();
+            mqPayload.put("appId", appId);
+            mqPayload.put("prompt", message);
+            mqPayload.put("userId", loginUser.getId());
+            aiMessageProducer.sendMessage(cn.hutool.json.JSONUtil.toJsonStr(mqPayload));
+            log.info("发送消息给消费者成功");
+        }
+        return sink.asFlux();
+    }
 
     @Override
     public String deployApp(Long appId, User loginUser) {
@@ -402,7 +447,7 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppSe
     private void handleAppUpdateError(long appId, String execMessage) {
         App updateAppResult = new App();
         updateAppResult.setId(appId);
-        updateAppResult.setStatus("failed");
+        updateAppResult.setStatus(AppConstant.FAILED_STATUS);
         updateAppResult.setExecMessage(execMessage);
         boolean result = this.updateById(updateAppResult);
         if (!result) {

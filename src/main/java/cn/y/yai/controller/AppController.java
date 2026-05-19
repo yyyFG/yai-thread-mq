@@ -74,14 +74,14 @@ public class AppController {
      */
     @GetMapping(value = "/chat/gen/code", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<String>> chatToCodeGen(@RequestParam Long appId,
-                                                       @RequestParam String message,
-                                                       HttpServletRequest request) {
+                                      @RequestParam String message,
+                                      HttpServletRequest request) {
         ThrowUtils.throwIf(appId == null || appId <= 0, ErrorCode.PARAMS_ERROR, "应用 ID 不能为空");
         ThrowUtils.throwIf(StrUtil.isBlank(message), ErrorCode.PARAMS_ERROR, "用户消息不能为空");
         // 获取当前登录用户
         User loginUser = userService.getLoginUser(request);
         // 调用服务生成代码（流式）
-        Flux<String> contentFlux = appService.chatToGenCodeAsync(appId, message, loginUser);
+        Flux<String> contentFlux = appService.chatToGenCode(appId, message, loginUser);
         // 转换成 ServerSentEvent 格式
         return contentFlux
                 .map(chunk -> {

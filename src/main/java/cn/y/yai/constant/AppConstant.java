@@ -27,4 +27,11 @@ public interface AppConstant {
      */
     String CODE_DEPLOY_HOST = "http://localhost";
 
+    String SUCCEED_STATUS = "succeed";
+
+    String WAIT_STATUS = "wait";
+
+    String RUNNING_STATUS = "running";
+
+    String FAILED_STATUS = "failed";
 }
