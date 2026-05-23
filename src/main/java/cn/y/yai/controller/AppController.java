@@ -17,6 +17,8 @@ import cn.y.yai.model.dto.app.*;
 import cn.y.yai.model.entity.App;
 import cn.y.yai.model.entity.User;
 import cn.y.yai.model.vo.AppVO;
+import cn.y.yai.ratelimiter.annotation.RateLimit;
+import cn.y.yai.ratelimiter.enums.RateLimitType;
 import cn.y.yai.service.AppService;
 import cn.y.yai.service.ChatHistoryService;
 import cn.y.yai.service.ProjectDownloadService;
@@ -73,6 +75,7 @@ public class AppController {
      * @return
      */
     @GetMapping(value = "/chat/gen/code", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @RateLimit(limitType = RateLimitType.USER, rate = 5, rateInterval = 60, message = "AI对话请求过于繁忙，请稍后再试")
     public Flux<ServerSentEvent<String>> chatToCodeGen(@RequestParam Long appId,
                                       @RequestParam String message,
                                       HttpServletRequest request) {
@@ -110,6 +113,7 @@ public class AppController {
      * @return
      */
     @GetMapping(value = "/chat/gen/code", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @RateLimit(limitType = RateLimitType.USER, rate = 5, rateInterval = 60, message = "AI对话请求过于繁忙，请稍后再试")
     public Flux<ServerSentEvent<String>> chatToCodeGenByAsync(@RequestParam Long appId,
                                                        @RequestParam String message,
                                                        HttpServletRequest request) {
@@ -147,6 +151,7 @@ public class AppController {
      * @return
      */
     @GetMapping(value = "/chat/gen/code", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @RateLimit(limitType = RateLimitType.USER, rate = 5, rateInterval = 60, message = "AI对话请求过于繁忙，请稍后再试")
     public Flux<ServerSentEvent<String>> chatToCodeGenByRabMQ(@RequestParam Long appId,
                                                        @RequestParam String message,
                                                        HttpServletRequest request) {
@@ -246,32 +251,6 @@ public class AppController {
         return ResultUtils.success(true);
     }
 
-    /**
-     * 更新应用（仅本人）
-     *
-     * @param appEditRequest
-     * @param request
-     * @return
-     */
-    @PostMapping("/edit")
-    public BaseResponse<Boolean> editApp(@RequestBody AppEditRequest appEditRequest, HttpServletRequest request) {
-        if (appEditRequest == null || appEditRequest.getId() <= 0) {
-            throw new BusinessException(ErrorCode.PARAMS_ERROR);
-        }
-        App app = new App();
-        BeanUtil.copyProperties(appEditRequest, app);
-        User loginUser = userService.getLoginUser(request);
-        long id = appEditRequest.getId();
-        // 判断是否存在
-        App oldApp = appService.getById(id);
-        ThrowUtils.throwIf(oldApp == null, ErrorCode.NOT_FOUND_ERROR);
-        // 仅本人可编辑
-        if (!oldApp.getUserId().equals(loginUser.getId())) {
-            throw new BusinessException(ErrorCode.NO_AUTH_ERROR);
-        }
-        boolean result = appService.updateById(app);
-        return ResultUtils.success(result);
-    }
 
     /**
      * 根据 id 获取应用详情
