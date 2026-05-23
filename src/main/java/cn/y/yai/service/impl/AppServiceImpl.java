@@ -396,8 +396,9 @@ public class AppServiceImpl extends ServiceImpl<AppMapper, App> implements AppSe
             String screenshotUrl = screenshotService.generateAndUploadScreenshot(appUrl);
             // 更新应用封面字段
             App updateApp = new App();
+            String cover = String.format("http://" + screenshotUrl);
             updateApp.setId(appId);
-            updateApp.setCover(screenshotUrl);
+            updateApp.setCover(cover);
             boolean updated = this.updateById(updateApp);
             ThrowUtils.throwIf(!updated, ErrorCode.OPERATION_ERROR, "更新应用封面字段失败");
         });
